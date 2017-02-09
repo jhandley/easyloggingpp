@@ -152,6 +152,17 @@
 // Windows
 #if defined(_WIN32) || defined(_WIN64)
 #   define _ELPP_OS_WINDOWS 1
+
+#ifdef WINAPI_FAMILY_PARTITION
+	#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP)
+		#define _ELPP_OS_WINDOWS_UNIVERSAL 1
+	#else
+		#define _ELPP_OS_WINDOWS_UNIVERSAL 0
+    #endif
+#else
+	#define _ELPP_OS_WINDOWS_UNIVERSAL 1
+#endif
+
 #else
 #   define _ELPP_OS_WINDOWS 0
 #endif // defined(_WIN32) || defined(_WIN64)
@@ -267,6 +278,9 @@
 #elif _ELPP_OS_WINDOWS
 #   include <direct.h>
 #   include <Windows.h>
+#if _ELPP_OS_WINDOWS_UNIVERSAL
+#   include <WinSock2.h> // For timeval
+#endif
 #endif // _ELPP_OS_UNIX
 #include <string>
 #include <vector>
@@ -769,7 +783,7 @@ public:
 //!
 class OSUtils : private internal::StaticClass {
 public:
-#if _ELPP_OS_WINDOWS
+#if _ELPP_OS_WINDOWS && !_ELPP_OS_WINDOWS_UNIVERSAL
     static const char* getWindowsEnvironmentVariable(const char* variableName) {
         const DWORD bufferLen = 50;
         static char buffer[bufferLen];
@@ -823,6 +837,7 @@ public:
 #endif // _ELPP_OS_UNIX
     }
 
+#if !_ELPP_OS_WINDOWS_UNIVERSAL
     static std::string getEnvironmentVariable(const char* variableName, const char* defaultVal, const char* alternativeBashCommand = NULL) {
 #if _ELPP_OS_UNIX
         const char* val = getenv(variableName);
@@ -844,12 +859,13 @@ public:
         }
         return std::string(val);
     }
+#endif // !_ELPP_OS_WINDOWS_UNIVERSAL
 
     // Gets current username.
     static const std::string currentUser(void) {
 #if _ELPP_OS_UNIX && !_ELPP_NDK
         return getEnvironmentVariable("USER", "user", "whoami");
-#elif _ELPP_OS_WINDOWS
+#elif _ELPP_OS_WINDOWS && !_ELPP_OS_WINDOWS_UNIVERSAL
         return getEnvironmentVariable("USERNAME", "user");
 #elif _ELPP_NDK
         return std::string("android");
@@ -862,7 +878,7 @@ public:
     static const std::string currentHost(void) {
 #if _ELPP_OS_UNIX && !_ELPP_NDK
         return getEnvironmentVariable("HOSTNAME", "unknown-host", "hostname");
-#elif _ELPP_OS_WINDOWS
+#elif _ELPP_OS_WINDOWS && !_ELPP_OS_WINDOWS_UNIVERSAL
         return getEnvironmentVariable("COMPUTERNAME", "unknown-host");
 #elif _ELPP_NDK
         return getDeviceName();
@@ -876,7 +892,7 @@ public:
         if (path_ == NULL) {
             return false;
         }
-#if _ELPP_OS_UNIX
+#if _ELPP_OS_UNIX || _ELPP_OS_WINDOWS_UNIVERSAL
         struct stat st;
         return (stat(path_, &st) == 0);
 #elif _ELPP_OS_WINDOWS
@@ -1002,7 +1018,7 @@ public:
         const int kDateBuffSize_ = 30;
         char dateBuffer_[kDateBuffSize_] = "";
         char dateBufferOut_[kDateBuffSize_] = "";
-#if _ELPP_OS_UNIX
+#if _ELPP_OS_UNIX 
         bool hasTime_ = ((type_ & constants_->kDateTime) || (type_ & constants_->kTimeOnly));
         timeval currTime;
         gettimeofday(&currTime, NULL);
@@ -1016,6 +1032,22 @@ public:
         } else {
             SPRINTF(dateBufferOut_, "%s", dateBuffer_);
         }
+#elif _ELPP_OS_WINDOWS_UNIVERSAL
+		bool hasTime_ = ((type_ & constants_->kDateTime) || (type_ & constants_->kTimeOnly));
+		timeval currTime;
+		gettimeofday(&currTime);
+		if (hasTime_) {
+			milliSeconds = currTime.tv_usec / milliSecondOffset_;
+		}
+		time_t timeSecs = currTime.tv_sec;
+		struct tm * timeInfo = localtime(&timeSecs);
+		strftime(dateBuffer_, sizeof(dateBuffer_), bufferFormat_.c_str(), timeInfo);
+		if (hasTime_) {
+			SPRINTF(dateBufferOut_, "%s.%03ld", dateBuffer_, milliSeconds);
+		} else {
+			SPRINTF(dateBufferOut_, "%s", dateBuffer_);
+		}
+
 #elif _ELPP_OS_WINDOWS
         const char* kTimeFormatLocal_ = "HH':'mm':'ss";
         const char* kDateFormatLocal_ = "dd/MM/yyyy";
@@ -1487,6 +1519,9 @@ public:
     //!
     void setToDefault(void) {
         setAll(ConfigurationType::Enabled, "true");
+// Removed below from original code to avoid creating the default logs folder.
+// If we upgrade to newer version we can instead use #define ELPP_NO_DEFAULT_LOG_FILE
+#if 0
 #if _ELPP_OS_UNIX
 #   if _ELPP_NDK
         setAll(ConfigurationType::Filename, "/data/local/tmp/myeasylog.txt");
@@ -1496,6 +1531,7 @@ public:
 #elif _ELPP_OS_WINDOWS
         setAll(ConfigurationType::Filename, "logs\\myeasylog.log");
 #endif // _ELPP_OS_UNIX
+#endif
         setAll(ConfigurationType::ToFile, "true");
         setAll(ConfigurationType::ToStandardOutput, "true");
         setAll(ConfigurationType::MillisecondsWidth, "3");
@@ -1930,7 +1966,7 @@ private:
             formatSpec |= constants_->kTimeOnly;
             setValue(level_, constants_->TIME_ONLY_FORMAT_SPECIFIER, dateFormatSpecifierMap_);
         }
-#if _ELPP_OS_UNIX
+#if _ELPP_OS_UNIX || _ELPP_OS_WINDOWS_UNIVERSAL
         const std::string kTimeFormatLocal_ = "%H:%M:%S";
         const std::string kDateFormatLocal_ = "%d/%m/%Y";
         std::string dateFormat;
@@ -2402,6 +2438,9 @@ public:
         Configurations conf;
         conf.setToDefault();
         conf.parseFromText(constants_->DEFAULT_LOGGER_CONFIGURATION);
+// Removed below from original code to avoid creating the default logs folder.
+// If we upgrade to newer version we can instead use #define ELPP_NO_DEFAULT_LOG_FILE
+#if 0
         registerNew(new Logger("trivial", constants_, conf));
         registerNew(new Logger("business", constants_));
         registerNew(new Logger("security", constants_));
@@ -2409,6 +2448,7 @@ public:
         confPerformance.setToDefault();
         confPerformance.setAll(ConfigurationType::PerformanceTracking, "true");
         registerNew(new Logger("performance", constants_, confPerformance));
+#endif
     }
 
     virtual ~RegisteredLoggers(void) {
